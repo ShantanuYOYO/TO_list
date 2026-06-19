@@ -468,10 +468,10 @@ def load_tasks():
             df = pd.DataFrame(columns=["ID", "Task", "Due Date", "Status", "Created Date"])
         else:
             df = pd.DataFrame(data[1:], columns=data[0])
-            # Due Date stores date + time (e.g. "2026-06-25 14:30") and may be
-            # blank for tasks with no due date set, which becomes NaT. format='mixed'
-            # ensures older rows saved as date-only ("2026-06-20") still parse
-            # correctly alongside newer date+time rows in the same column.
+            # Due Date and Created Date are stored as date-only (e.g. "2026-06-25").
+            # Due Date may be blank for tasks with no due date set, which becomes NaT.
+            # format='mixed' keeps this tolerant of any older rows that might still
+            # have a time component saved in the same column.
             df['Due Date'] = pd.to_datetime(df['Due Date'], errors='coerce', format='mixed')
             df['Created Date'] = pd.to_datetime(df['Created Date'], errors='coerce', format='mixed')
         st.session_state.tasks = df
@@ -484,16 +484,16 @@ def load_tasks():
 
 def add_task_to_sheet(task_text, due_date):
     """Add a new task row to the Google Sheet.
-    due_date may be a datetime (date + time) or None if no due date was set.
-    The Created Date (just 'Date' in the UI) is always set automatically to now."""
+    due_date may be a date (no time component) or None if no due date was set.
+    The Created Date (just 'Date' in the UI) is always set automatically to today's date."""
     sheet = setup_google_sheets()
     if not sheet:
         return False
     try:
         # Generate unique ID
         new_id = str(uuid.uuid4())[:8].upper()
-        created = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        due_str = due_date.strftime("%Y-%m-%d %H:%M") if due_date else ""
+        created = date.today().strftime("%Y-%m-%d")
+        due_str = due_date.strftime("%Y-%m-%d") if due_date else ""
         row = [new_id, task_text, due_str, "Not Done", created]
         sheet.append_row(row)
         log_debug(f"Added task: {task_text}")
@@ -528,8 +528,8 @@ def get_overdue_tasks():
     df = st.session_state.tasks.copy()
     if df.empty:
         return []
-    now = datetime.now()
-    mask = df['Due Date'].notna() & (df['Status'] != "Done") & (df['Due Date'] < now)
+    today = pd.Timestamp(date.today())
+    mask = df['Due Date'].notna() & (df['Status'] != "Done") & (df['Due Date'] < today)
     overdue = df[mask]
     return overdue.to_dict('records')
 
@@ -600,11 +600,11 @@ with tab1:
             task_id = row['ID']
             task_text_raw = row['Task']
             task_text = html.escape(str(task_text_raw))
-            due_date = row['Due Date']  # pandas Timestamp (date + time) or NaT
+            due_date = row['Due Date']  # pandas Timestamp (date only) or NaT
             status = row['Status']
             is_done = status == "Done"
             has_due_date = pd.notna(due_date)
-            overdue = has_due_date and (not is_done) and (due_date < datetime.now())
+            overdue = has_due_date and (not is_done) and (due_date.date() < date.today())
 
             if is_done:
                 stamp_class, stamp_label = "delivered", "DELIVERED"
@@ -622,7 +622,7 @@ with tab1:
                 card_classes += " is-done"
 
             if has_due_date:
-                due_display = f"Due {due_date.strftime('%b %d, %Y · %I:%M %p')}"
+                due_display = f"Due {due_date.strftime('%b %d, %Y')}"
             else:
                 due_display = "No due date set"
             meta_class = "task-meta overdue-meta" if overdue else "task-meta"
@@ -672,24 +672,16 @@ with tab2:
     with st.form("add_task_form"):
         task_input = st.text_input("Task Description", placeholder="What needs to be done?")
         has_due_date = st.checkbox("Set a due date", value=True,
-                                    help="Uncheck to add a task with no due date and no due time.")
-        due_col1, due_col2 = st.columns(2)
-        with due_col1:
-            due_date_input = st.date_input("Due Date", value=date.today(), disabled=not has_due_date)
-        with due_col2:
-            due_time_input = st.time_input(
-                "Due Time",
-                value=datetime.now().time().replace(second=0, microsecond=0),
-                disabled=not has_due_date
-            )
+                                    help="Uncheck to add a task with no due date.")
+        due_date_input = st.date_input("Due Date", value=date.today(), disabled=not has_due_date)
         submit = st.form_submit_button("Add Task")
 
         if submit:
             if not task_input.strip():
                 st.error("Please enter a task description.")
             else:
-                due_datetime = datetime.combine(due_date_input, due_time_input) if has_due_date else None
-                if add_task_to_sheet(task_input.strip(), due_datetime):
+                due_date_value = due_date_input if has_due_date else None
+                if add_task_to_sheet(task_input.strip(), due_date_value):
                     if has_due_date:
                         st.success("Task added successfully!")
                     else:
@@ -731,7 +723,7 @@ with tab3:
                 status = row['Status']
                 due = row['Due Date']
                 task_text = html.escape(str(row['Task']))
-                overdue = (due < datetime.now()) and status != "Done"
+                overdue = (due.date() < date.today()) and status != "Done"
 
                 if status == "Done":
                     cal_class, icon = "done", "✅"
@@ -740,7 +732,7 @@ with tab3:
                 else:
                     cal_class, icon = "pending", "🟡"
 
-                due_display = due.strftime('%b %d, %Y · %I:%M %p')
+                due_display = due.strftime('%b %d, %Y')
                 st.markdown(f"""
                 <div class="cal-card {cal_class}">
                     <div class="cal-icon">{icon}</div>
@@ -764,7 +756,7 @@ with tab4:
         else:
             st.warning(f"Found {len(overdue)} overdue task(s):")
             for t in overdue:
-                due_str = t['Due Date'].strftime('%b %d, %Y · %I:%M %p') if hasattr(t['Due Date'], 'strftime') else t['Due Date']
+                due_str = t['Due Date'].strftime('%b %d, %Y') if hasattr(t['Due Date'], 'strftime') else t['Due Date']
                 task_text = html.escape(str(t['Task']))
                 st.markdown(f"""
                 <div class="alert-row">
