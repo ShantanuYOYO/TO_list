@@ -1,21 +1,13 @@
 import streamlit as st
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.utils import formataddr
 from datetime import datetime, date, timedelta
 import pandas as pd
 import json
 import time
-import secrets
-import string
 import os
 import traceback
-import ssl
 import uuid
-import hashlib
 import html
 
 # ---------- PAGE CONFIGURATION ----------
@@ -400,7 +392,6 @@ section[data-testid="stSidebar"] h3 {
 """, unsafe_allow_html=True)
 
 # ---------- CONSTANTS ----------
-DEFAULT_EMAIL = "your_default_email@gmail.com"  # Will be overridden from secrets or sidebar
 SCOPES = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
 SHEET_NAME = "TODO_Tasks"
 
@@ -409,14 +400,6 @@ if 'tasks' not in st.session_state:
     st.session_state.tasks = pd.DataFrame()  # holds latest from sheet
 if 'last_sync' not in st.session_state:
     st.session_state.last_sync = None
-if 'add_form' not in st.session_state:
-    st.session_state.add_form = {'task': '', 'due_date': date.today()}
-if 'filter_date' not in st.session_state:
-    st.session_state.filter_date = date.today()
-if 'show_calendar_tasks' not in st.session_state:
-    st.session_state.show_calendar_tasks = []
-if 'email_reminder_sent' not in st.session_state:
-    st.session_state.email_reminder_sent = False
 if 'debug_logs' not in st.session_state:
     st.session_state.debug_logs = []
 
@@ -485,7 +468,7 @@ def load_tasks():
             df = pd.DataFrame(columns=["ID", "Task", "Due Date", "Status", "Created Date"])
         else:
             df = pd.DataFrame(data[1:], columns=data[0])
-            # Due Date now stores date + time (e.g. "2026-06-25 14:30") and may be
+            # Due Date stores date + time (e.g. "2026-06-25 14:30") and may be
             # blank for tasks with no due date set, which becomes NaT. format='mixed'
             # ensures older rows saved as date-only ("2026-06-20") still parse
             # correctly alongside newer date+time rows in the same column.
@@ -501,7 +484,8 @@ def load_tasks():
 
 def add_task_to_sheet(task_text, due_date):
     """Add a new task row to the Google Sheet.
-    due_date may be a datetime (date + time) or None if no due date was set."""
+    due_date may be a datetime (date + time) or None if no due date was set.
+    The Created Date (just 'Date' in the UI) is always set automatically to now."""
     sheet = setup_google_sheets()
     if not sheet:
         return False
@@ -549,80 +533,10 @@ def get_overdue_tasks():
     overdue = df[mask]
     return overdue.to_dict('records')
 
-def send_email_notification(overdue_tasks, to_email=None):
-    """Send an email alert about overdue tasks"""
-    try:
-        # Load email credentials
-        email_sections = ['EMAIL', 'email', 'gmail', 'GMAIL']
-        sender = None
-        password = None
-        for section in email_sections:
-            if section in st.secrets:
-                sec = st.secrets[section]
-                sender = sec.get('sender_email') or sec.get('email') or sec.get('user')
-                password = sec.get('sender_password') or sec.get('password') or sec.get('pass')
-                if sender and password:
-                    break
-        if not sender or not password:
-            # Direct keys
-            sender = st.secrets.get('EMAIL_SENDER') or st.secrets.get('sender_email')
-            password = st.secrets.get('EMAIL_PASSWORD') or st.secrets.get('sender_password')
-        if not sender or not password:
-            log_debug("Email credentials not configured", "ERROR")
-            return False, "Email credentials missing in secrets."
-
-        recipient = to_email or DEFAULT_EMAIL
-        if not recipient or '@' not in recipient:
-            return False, "No valid recipient email set."
-
-        msg = MIMEMultipart('alternative')
-        msg['From'] = formataddr(("TODO Flow Reminder", sender))
-        msg['To'] = recipient
-        msg['Subject'] = f"⏰ Overdue Tasks Alert - {date.today().strftime('%b %d, %Y')}"
-
-        # Build HTML table of overdue tasks
-        rows = ""
-        for t in overdue_tasks:
-            due_str = t['Due Date'].strftime('%b %d, %Y %I:%M %p') if hasattr(t['Due Date'], 'strftime') else str(t['Due Date'])
-            rows += f"<tr><td style='padding:8px; border-bottom:1px solid #ddd;'>{t['Task']}</td><td style='padding:8px; color:#b6402c;'>{due_str}</td></tr>"
-
-        html_body = f"""
-        <html><body style="font-family:Arial,sans-serif;">
-        <div style="max-width:600px; margin:auto; padding:20px;">
-            <h2 style="color:#2b3a55;">📋 Overdue Tasks Reminder</h2>
-            <p>The following tasks are past their due date and still marked as <b>Not Done</b>:</p>
-            <table style="width:100%; border-collapse:collapse; margin:20px 0;">
-                <tr style="background:#2b3a55; color:white;"><th style="padding:10px;">Task</th><th>Due Date</th></tr>
-                {rows}
-            </table>
-            <p style="color:#5b6472;">Please complete them or update their status in TODO Flow.</p>
-            <hr>
-            <p style="font-size:12px; color:#9aa3af;">Sent by TODO Flow • hrvolarfashion@gmail.com</p>
-        </div></body></html>
-        """
-
-        msg.attach(MIMEText(html_body, 'html'))
-
-        # Create SMTP connection
-        context = ssl.create_default_context()
-        server = smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=10, context=context)
-        server.login(sender, password)
-        server.sendmail(sender, recipient, msg.as_string())
-        server.quit()
-        return True, f"Reminder sent to {recipient}"
-    except Exception as e:
-        log_debug(f"Email error: {traceback.format_exc()}")
-        return False, str(e)
-
 # ---------- SIDEBAR CONFIGURATION ----------
 with st.sidebar:
     st.title("⚙️ Settings")
     st.caption("Manifest configuration")
-    st.markdown("---")
-    # Email recipient for reminders
-    st.subheader("📧 Default Reminder Email")
-    reminder_email = st.text_input("Send reminders to:", value=DEFAULT_EMAIL,
-                                   help="Enter the email to receive overdue task alerts.")
     st.markdown("---")
 
     # Quick actions
@@ -631,19 +545,6 @@ with st.sidebar:
         st.success("Tasks refreshed!")
         time.sleep(1)
         st.rerun()
-
-    if st.button("📤 Send Overdue Reminders"):
-        with st.spinner("Checking for overdue tasks..."):
-            overdue = get_overdue_tasks()
-            if not overdue:
-                st.warning("No overdue tasks found.")
-            else:
-                success, msg = send_email_notification(overdue, reminder_email)
-                if success:
-                    st.success(msg)
-                    st.session_state.email_reminder_sent = True
-                else:
-                    st.error(f"Failed to send: {msg}")
 
     # Debug logs (collapsed)
     with st.expander("🔧 Debug Logs"):
@@ -767,18 +668,19 @@ with tab1:
 # ========== TAB 2: ADD NEW TASK ==========
 with tab2:
     st.markdown("### ➕ Create a New Task")
-    st.caption("Add a new entry to today's manifest.")
+    st.caption("Add a new entry to today's manifest. The creation date is set automatically.")
     with st.form("add_task_form"):
         task_input = st.text_input("Task Description", placeholder="What needs to be done?")
         has_due_date = st.checkbox("Set a due date", value=True,
-                                    help="Uncheck to add a task with no due date.")
+                                    help="Uncheck to add a task with no due date and no due time.")
         due_col1, due_col2 = st.columns(2)
         with due_col1:
-            due_date_input = st.date_input("Due Date", value=date.today())
+            due_date_input = st.date_input("Due Date", value=date.today(), disabled=not has_due_date)
         with due_col2:
             due_time_input = st.time_input(
                 "Due Time",
-                value=datetime.now().time().replace(second=0, microsecond=0)
+                value=datetime.now().time().replace(second=0, microsecond=0),
+                disabled=not has_due_date
             )
         submit = st.form_submit_button("Add Task")
 
@@ -872,23 +774,10 @@ with tab4:
                 </div>
                 """, unsafe_allow_html=True)
 
-            st.markdown("---")
-            send_col1, send_col2 = st.columns(2)
-            with send_col1:
-                if st.button("📧 Send Reminder Email", key="send_reminder_tab4"):
-                    with st.spinner("Sending..."):
-                        success, msg = send_email_notification(overdue, reminder_email)
-                        if success:
-                            st.success(msg)
-                        else:
-                            st.error(f"Failed: {msg}")
-            with send_col2:
-                st.caption(f"Reminder will be sent to: **{reminder_email}**")
-
 # ---------- FOOTER ----------
 st.markdown("""
 <div class="manifest-footer">
     <strong>TODO Flow</strong><br>
-    Synced with Google Sheets · Automated Reminders
+    Synced with Google Sheets
 </div>
 """, unsafe_allow_html=True)
