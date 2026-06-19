@@ -16,6 +16,7 @@ import traceback
 import ssl
 import uuid
 import hashlib
+import html
 
 # ---------- PAGE CONFIGURATION ----------
 st.set_page_config(
@@ -25,216 +26,374 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ---------- CUSTOM CSS (ELEGANT DARK MODE COMPATIBLE) ----------
+# ---------- CUSTOM CSS ----------
+# Design concept: a "task manifest" — tasks read like shipping-label stubs,
+# stamped DELIVERED / IN TRANSIT / OVERDUE, with monospace tracking IDs.
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap');
 
 :root {
-    --primary: #0d9488;
-    --primary-dark: #0f766e;
-    --secondary: #f59e0b;
-    --success: #10b981;
-    --danger: #ef4444;
-    --bg: #ffffff;
-    --bg-secondary: #f8fafc;
-    --card-bg: #ffffff;
-    --text: #0f172a;
-    --text-secondary: #475569;
-    --text-muted: #94a3b8;
-    --border: #e2e8f0;
-    --input-bg: #f1f5f9;
-    --shadow: rgba(15, 23, 42, 0.06);
+    --ink: #1c2430;
+    --ink-soft: #5b6472;
+    --ink-faint: #94a0ad;
+    --paper: #eef0ed;
+    --paper-card: #ffffff;
+    --rule: #d7dbdf;
+    --rule-strong: #b9c0c6;
+    --brand: #2b3a55;
+    --brand-soft: #3d5074;
+    --stamp-red: #b6402c;
+    --stamp-red-bg: #f7e7e3;
+    --stamp-green: #2f6b52;
+    --stamp-green-bg: #e6f0ea;
+    --stamp-amber: #a8761f;
+    --stamp-amber-bg: #f6efdd;
+    --shadow: rgba(28, 36, 48, 0.08);
 }
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --primary: #14b8a6;
-        --primary-dark: #0d9488;
-        --secondary: #fbbf24;
-        --success: #34d399;
-        --danger: #f87171;
-        --bg: #0f172a;
-        --bg-secondary: #1e293b;
-        --card-bg: #1e293b;
-        --text: #f1f5f9;
-        --text-secondary: #cbd5e1;
-        --text-muted: #64748b;
-        --border: #334155;
-        --input-bg: #334155;
-        --shadow: rgba(0, 0, 0, 0.4);
+        --ink: #e8eaef;
+        --ink-soft: #aab1bd;
+        --ink-faint: #707886;
+        --paper: #11151d;
+        --paper-card: #1b212c;
+        --rule: #313a48;
+        --rule-strong: #424c5c;
+        --brand: #8da3d2;
+        --brand-soft: #a3b6dc;
+        --stamp-red: #e2796a;
+        --stamp-red-bg: #2e1d1c;
+        --stamp-green: #6cc09a;
+        --stamp-green-bg: #1b2922;
+        --stamp-amber: #dab15b;
+        --stamp-amber-bg: #2c2516;
+        --shadow: rgba(0, 0, 0, 0.45);
     }
 }
 
-* { font-family: 'Inter', sans-serif; color: var(--text); }
-
-.stApp {
-    background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg) 100%);
-    min-height: 100vh;
+@media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
 }
 
-.main {
-    background: transparent;
-}
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+* { color: var(--ink); }
 
-h1 {
-    background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    text-align: center;
-    font-size: 3rem;
+.stApp { background: var(--paper); }
+.main .block-container { max-width: 900px; margin: 0 auto; padding-top: 2.25rem; }
+
+hr { border: none; border-top: 1.5px solid var(--rule); margin: 1rem 0; }
+
+/* ---- Header ---- */
+.manifest-header { text-align: center; margin: 0.25rem 0 2rem; }
+.manifest-eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 0.6rem;
+}
+.manifest-title {
+    font-family: 'Space Grotesk', sans-serif;
     font-weight: 700;
-    font-family: 'Playfair Display', serif;
-    letter-spacing: -0.5px;
-    margin-bottom: 0.25rem;
+    font-size: 2.6rem;
+    color: var(--ink);
+    margin: 0;
+    letter-spacing: -0.02em;
 }
-
-h2 {
-    color: var(--text-muted);
-    text-align: center;
-    font-size: 1.25rem;
+.manifest-rule {
+    width: 56px;
+    height: 3px;
+    background: var(--brand);
+    margin: 1rem auto;
+    border-radius: 2px;
+}
+.manifest-sub {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.95rem;
+    color: var(--ink-soft);
     font-weight: 400;
-    margin-bottom: 2.5rem;
 }
 
 h3 {
-    color: var(--primary);
+    font-family: 'Space Grotesk', sans-serif;
+    color: var(--ink);
     font-weight: 600;
-    margin-top: 1.5rem;
-    margin-bottom: 1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+    font-size: 1.05rem;
+    margin: 1.2rem 0 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1.5px solid var(--rule);
+    letter-spacing: -0.01em;
 }
 
-h3::before {
-    content: '';
-    display: inline-block;
-    width: 6px;
-    height: 24px;
-    background: linear-gradient(180deg, var(--primary) 0%, var(--secondary) 100%);
-    border-radius: 3px;
-}
-
+/* ---- Buttons ---- */
 .stButton>button {
-    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-    color: white;
+    background: var(--brand);
+    color: #fff !important;
     border: none;
-    padding: 0.75rem 2rem;
-    font-size: 1rem;
-    border-radius: 12px;
+    padding: 0.65rem 1.5rem;
+    font-size: 0.92rem;
     font-weight: 600;
-    transition: all 0.3s ease;
-    box-shadow: 0 6px 20px rgba(13, 148, 136, 0.2);
+    border-radius: 8px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    box-shadow: 0 2px 8px var(--shadow);
     width: 100%;
-    cursor: pointer;
 }
-
+.stButton>button p { color: #fff !important; }
 .stButton>button:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 10px 30px rgba(13, 148, 136, 0.3);
+    background: var(--brand-soft);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px var(--shadow);
 }
+.stButton>button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
+/* ---- Inputs ---- */
 .stTextInput>div>div>input,
 .stDateInput>div>div>input,
 .stTextArea>div>div>textarea,
 .stSelectbox>div>div>select {
-    background-color: var(--input-bg) !important;
-    border: 2px solid var(--border) !important;
-    border-radius: 12px !important;
-    padding: 0.75rem 1rem !important;
-    color: var(--text) !important;
-    transition: all 0.3s ease;
+    background-color: var(--paper-card) !important;
+    border: 1.5px solid var(--rule) !important;
+    border-radius: 8px !important;
+    padding: 0.65rem 0.9rem !important;
+    color: var(--ink) !important;
 }
-
 .stTextInput>div>div>input:focus,
 .stDateInput>div>div>input:focus,
 .stTextArea>div>div>textarea:focus,
 .stSelectbox>div>div>select:focus {
-    border-color: var(--primary) !important;
-    box-shadow: 0 0 0 4px rgba(13, 148, 136, 0.1) !important;
+    border-color: var(--brand) !important;
+    box-shadow: 0 0 0 3px rgba(43, 58, 85, 0.14) !important;
 }
 
-.card {
-    background: var(--card-bg);
-    padding: 1.75rem;
-    border-radius: 20px;
-    box-shadow: 0 12px 30px var(--shadow);
-    margin: 1rem 0;
-    border: 1px solid var(--border);
-    position: relative;
-    overflow: hidden;
-}
-
-.card::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 4px;
-    background: linear-gradient(90deg, var(--primary), var(--secondary));
-}
-
-.success-msg {
-    background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
-    border-left: 4px solid #10b981;
-    color: #065f46;
-    padding: 1.5rem;
+div[data-testid="stForm"] {
+    background: var(--paper-card);
+    border: 1px solid var(--rule);
     border-radius: 12px;
-    margin: 1.5rem 0;
-    text-align: center;
-    font-weight: 500;
+    padding: 1.5rem 1.75rem 0.5rem;
+    box-shadow: 0 4px 16px var(--shadow);
 }
 
-.error-msg {
-    background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
-    border-left: 4px solid #ef4444;
-    color: #7f1d1d;
-    padding: 1.5rem;
-    border-radius: 12px;
-    margin: 1.5rem 0;
-    text-align: center;
-}
-
-.info-box {
-    background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%);
-    border-left: 4px solid #0284c7;
-    color: #0c4a6e;
-    padding: 1.5rem;
-    border-radius: 12px;
-    margin: 1.5rem 0;
-}
-
-/* Tabs styling */
+/* ---- Tabs ---- */
 .stTabs [data-baseweb="tab-list"] {
-    gap: 12px;
-    background: var(--card-bg);
-    padding: 10px;
-    border-radius: 16px;
-    border: 1px solid var(--border);
-    box-shadow: 0 4px 12px var(--shadow);
+    gap: 4px;
+    background: transparent;
+    border-bottom: 1.5px solid var(--rule);
 }
-
 .stTabs [data-baseweb="tab"] {
-    background: var(--bg);
-    border-radius: 10px;
-    color: var(--text-muted);
-    font-weight: 500;
-    padding: 10px 24px;
-    border: 1px solid var(--border);
+    background: transparent;
+    border-radius: 6px 6px 0 0;
+    color: var(--ink-faint);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.76rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-weight: 600;
+    padding: 0.7rem 1.1rem;
+    border: none;
 }
-
 .stTabs [aria-selected="true"] {
-    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-    color: white !important;
-    border-color: var(--primary);
+    color: var(--brand) !important;
+    background: var(--paper-card);
+    border-bottom: 2px solid var(--brand);
+}
+.stTabs [data-baseweb="tab"] p { color: inherit !important; }
+
+/* ---- Task card: shipping-label style ---- */
+.task-card {
+    background: var(--paper-card);
+    border-radius: 10px;
+    box-shadow: 0 4px 16px var(--shadow);
+    margin: 0.85rem 0 0.4rem;
+    border: 1px solid var(--rule);
+    display: flex;
+    overflow: hidden;
+    position: relative;
+}
+.task-card.is-overdue { border-color: var(--stamp-red); }
+.task-card.is-done { opacity: 0.6; }
+
+.task-stub {
+    flex: 0 0 84px;
+    border-right: 1.5px dashed var(--rule-strong);
+    padding: 1rem 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--paper);
+}
+.task-id {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--ink-faint);
+    letter-spacing: 0.04em;
+    writing-mode: vertical-rl;
+    text-orientation: upright;
+    line-height: 1.3;
 }
 
-.footer {
+.task-body { flex: 1; padding: 1rem 1.3rem; position: relative; }
+.task-text {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--ink);
+    line-height: 1.4;
+    padding-right: 6.5rem;
+}
+.task-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.74rem;
+    color: var(--ink-soft);
+    margin-top: 0.55rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+.task-meta.overdue-meta { color: var(--stamp-red); font-weight: 600; }
+
+.stamp {
+    position: absolute;
+    top: 0.95rem;
+    right: 1.2rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.3rem 0.55rem;
+    border: 1.5px dashed currentColor;
+    border-radius: 5px;
+    transform: rotate(-6deg);
+    white-space: nowrap;
+}
+.stamp.delivered { color: var(--stamp-green); background: var(--stamp-green-bg); }
+.stamp.overdue { color: var(--stamp-red); background: var(--stamp-red-bg); }
+.stamp.pending { color: var(--stamp-amber); background: var(--stamp-amber-bg); }
+
+@media (max-width: 640px) {
+    .task-card { flex-direction: column; }
+    .task-stub {
+        flex-direction: row;
+        border-right: none;
+        border-bottom: 1.5px dashed var(--rule-strong);
+        width: 100%;
+        padding: 0.4rem 1rem;
+    }
+    .task-id { writing-mode: horizontal-tb; text-orientation: mixed; }
+    .task-text { padding-right: 0; }
+}
+
+/* ---- Calendar cards ---- */
+.cal-card {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    background: var(--paper-card);
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--ink-faint);
+    border-radius: 8px;
+    padding: 0.85rem 1.1rem;
+    margin-bottom: 0.6rem;
+}
+.cal-card.done { border-left-color: var(--stamp-green); opacity: 0.7; }
+.cal-card.overdue { border-left-color: var(--stamp-red); }
+.cal-card.pending { border-left-color: var(--stamp-amber); }
+.cal-icon { font-size: 1.05rem; }
+.cal-task { font-weight: 600; font-size: 0.98rem; }
+.cal-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--ink-soft);
+    margin-top: 0.15rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+/* ---- Overdue alert rows ---- */
+.alert-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: var(--stamp-red-bg);
+    border-left: 3px solid var(--stamp-red);
+    border-radius: 6px;
+    padding: 0.65rem 1rem;
+    margin-bottom: 0.5rem;
+}
+.alert-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--stamp-red); flex-shrink: 0; }
+.alert-task { font-weight: 600; flex: 1; }
+.alert-due {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.74rem;
+    color: var(--stamp-red);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+}
+
+/* ---- Native alerts (st.success / st.error / st.warning / st.info) ---- */
+div[data-testid="stAlert"] {
+    border-radius: 8px !important;
+    font-family: 'Inter', sans-serif !important;
+}
+
+/* ---- Sidebar ---- */
+section[data-testid="stSidebar"] {
+    background: var(--paper-card);
+    border-right: 1px solid var(--rule);
+}
+section[data-testid="stSidebar"] h1 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.25rem;
+    font-weight: 700;
+    text-align: left;
+    color: var(--ink);
+    margin-bottom: 0.1rem;
+}
+section[data-testid="stSidebar"] h3 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--ink-faint);
+    font-weight: 600;
+    border-bottom: none;
+    margin-top: 0.4rem;
+    padding-bottom: 0;
+}
+
+.console-box {
+    background: var(--ink);
+    color: #b8e6c4;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    line-height: 1.6;
+    padding: 0.85rem;
+    border-radius: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+/* ---- Footer ---- */
+.manifest-footer {
     text-align: center;
-    color: var(--text-muted);
-    padding: 2rem;
-    margin-top: 3rem;
-    border-top: 1px solid var(--border);
+    color: var(--ink-faint);
+    padding: 2rem 0 1rem;
+    margin-top: 2.5rem;
+    border-top: 1.5px solid var(--rule);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.manifest-footer strong {
+    color: var(--brand);
+    font-family: 'Space Grotesk', sans-serif;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 0.95rem;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -419,24 +578,24 @@ def send_email_notification(overdue_tasks, to_email=None):
         rows = ""
         for t in overdue_tasks:
             due_str = t['Due Date'].strftime('%Y-%m-%d') if hasattr(t['Due Date'], 'strftime') else str(t['Due Date'])
-            rows += f"<tr><td style='padding:8px; border-bottom:1px solid #ddd;'>{t['Task']}</td><td style='padding:8px; color:#ef4444;'>{due_str}</td></tr>"
+            rows += f"<tr><td style='padding:8px; border-bottom:1px solid #ddd;'>{t['Task']}</td><td style='padding:8px; color:#b6402c;'>{due_str}</td></tr>"
 
-        html = f"""
+        html_body = f"""
         <html><body style="font-family:Arial,sans-serif;">
         <div style="max-width:600px; margin:auto; padding:20px;">
-            <h2 style="color:#0d9488;">📋 Overdue Tasks Reminder</h2>
+            <h2 style="color:#2b3a55;">📋 Overdue Tasks Reminder</h2>
             <p>The following tasks are past their due date and still marked as <b>Not Done</b>:</p>
             <table style="width:100%; border-collapse:collapse; margin:20px 0;">
-                <tr style="background:#0d9488; color:white;"><th style="padding:10px;">Task</th><th>Due Date</th></tr>
+                <tr style="background:#2b3a55; color:white;"><th style="padding:10px;">Task</th><th>Due Date</th></tr>
                 {rows}
             </table>
-            <p style="color:#64748b;">Please complete them or update their status in TODO Flow.</p>
+            <p style="color:#5b6472;">Please complete them or update their status in TODO Flow.</p>
             <hr>
-            <p style="font-size:12px; color:#94a3b8;">Sent by TODO Flow • hrvolarfashion@gmail.com</p>
+            <p style="font-size:12px; color:#9aa3af;">Sent by TODO Flow • hrvolarfashion@gmail.com</p>
         </div></body></html>
         """
 
-        msg.attach(MIMEText(html, 'html'))
+        msg.attach(MIMEText(html_body, 'html'))
 
         # Create SMTP connection
         context = ssl.create_default_context()
@@ -451,7 +610,8 @@ def send_email_notification(overdue_tasks, to_email=None):
 
 # ---------- SIDEBAR CONFIGURATION ----------
 with st.sidebar:
-    st.title("⚙️ TODO Flow Settings")
+    st.title("⚙️ Settings")
+    st.caption("Manifest configuration")
     st.markdown("---")
     # Email recipient for reminders
     st.subheader("📧 Default Reminder Email")
@@ -483,14 +643,20 @@ with st.sidebar:
     with st.expander("🔧 Debug Logs"):
         if st.button("Clear Logs"):
             st.session_state.debug_logs.clear()
-        for log in st.session_state.debug_logs[-15:]:
-            st.text(log)
+        logs = st.session_state.debug_logs[-15:]
+        if logs:
+            logs_html = "<br>".join(html.escape(log) for log in logs)
+        else:
+            logs_html = "No logs yet."
+        st.markdown(f'<div class="console-box">{logs_html}</div>', unsafe_allow_html=True)
 
 # ---------- MAIN HEADER ----------
 st.markdown("""
-<div style="text-align: center; margin-top: 1rem;">
-    <h1>✅ TODO Flow</h1>
-    <h2>Smart Task Manager with Google Sheets Sync</h2>
+<div class="manifest-header">
+    <div class="manifest-eyebrow">Task Manifest · Synced with Google Sheets</div>
+    <h1 class="manifest-title">TODO Flow</h1>
+    <div class="manifest-rule"></div>
+    <div class="manifest-sub">Every task tracked, stamped, and accounted for.</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -522,35 +688,40 @@ with tab1:
         # Sort by due date ascending
         df = df.sort_values(by=['Due Date', 'Created Date'], ascending=[True, False])
 
-        # Display each task as a card with checkbox
+        # Display each task as a manifest-style label card with checkbox
         for idx, row in df.iterrows():
             task_id = row['ID']
-            task_text = row['Task']
+            task_text_raw = row['Task']
+            task_text = html.escape(str(task_text_raw))
             due_date = row['Due Date']
             status = row['Status']
             is_done = status == "Done"
             overdue = (due_date < date.today()) and (status != "Done")
 
-            # Style card based on status
-            border_color = "#10b981" if is_done else ("#ef4444" if overdue else "#0d9488")
-            opacity = "0.7" if is_done else "1"
+            if is_done:
+                stamp_class, stamp_label = "delivered", "DELIVERED"
+            elif overdue:
+                stamp_class, stamp_label = "overdue", "OVERDUE"
+            else:
+                stamp_class, stamp_label = "pending", "IN TRANSIT"
+
+            card_classes = "task-card"
+            if overdue:
+                card_classes += " is-overdue"
+            if is_done:
+                card_classes += " is-done"
+
+            due_display = due_date.strftime('%b %d, %Y') if hasattr(due_date, 'strftime') else str(due_date)
+            meta_class = "task-meta overdue-meta" if overdue else "task-meta"
+
             with st.container():
                 st.markdown(f"""
-                <div class="card" style="border-left: 4px solid {border_color}; opacity: {opacity};">
-                    <div style="display: flex; align-items: center; gap: 1rem;">
-                        <div style="flex: 1;">
-                            <div style="font-size: 1.1rem; font-weight: 600; color: var(--text);">
-                                {task_text}
-                            </div>
-                            <div style="font-size: 0.9rem; color: var(--text-muted); margin-top: 0.25rem;">
-                                📅 Due: {due_date.strftime('%b %d, %Y') if hasattr(due_date, 'strftime') else due_date}
-                                {"<span style='color:#ef4444; font-weight:600;'> (Overdue)</span>" if overdue else ""}
-                                {"<span style='color:#10b981;'> (Completed)</span>" if is_done else ""}
-                            </div>
-                        </div>
-                        <div style="display: flex; align-items: center; gap: 0.5rem;">
-                            <span style="font-size: 0.85rem; color: var(--text-muted);">{status}</span>
-                        </div>
+                <div class="{card_classes}">
+                    <div class="task-stub"><span class="task-id">{task_id}</span></div>
+                    <div class="task-body">
+                        <span class="stamp {stamp_class}">{stamp_label}</span>
+                        <div class="task-text">{task_text}</div>
+                        <div class="{meta_class}">Due {due_display}</div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -559,8 +730,7 @@ with tab1:
                 col1, col2, col3 = st.columns([0.5, 0.5, 5])
                 with col1:
                     new_status = st.checkbox("Done", value=is_done, key=f"chk_{task_id}",
-                                             help="Mark task as completed",
-                                             on_change=None)
+                                             help="Mark task as completed")
                 with col2:
                     if st.button("🗑️", key=f"del_{task_id}", help="Delete task"):
                         # Delete logic (optional, not requested but useful)
@@ -572,7 +742,7 @@ with tab1:
                     if update_task_status(task_id, new_status_str):
                         # Update local DataFrame
                         st.session_state.tasks.loc[st.session_state.tasks['ID'] == task_id, 'Status'] = new_status_str
-                        st.success(f"Task '{task_text[:30]}...' updated!")
+                        st.success(f"Task '{str(task_text_raw)[:30]}...' updated!")
                         time.sleep(0.5)
                         st.rerun()
                     else:
@@ -585,6 +755,7 @@ with tab1:
 # ========== TAB 2: ADD NEW TASK ==========
 with tab2:
     st.markdown("### ➕ Create a New Task")
+    st.caption("Add a new entry to today's manifest.")
     with st.form("add_task_form"):
         task_input = st.text_input("Task Description", placeholder="What needs to be done?")
         due_input = st.date_input("Due Date", value=date.today())
@@ -629,12 +800,24 @@ with tab3:
             for _, row in filtered.iterrows():
                 status = row['Status']
                 due = row['Due Date']
+                task_text = html.escape(str(row['Task']))
                 overdue = (due < date.today()) and status != "Done"
-                icon = "✅" if status == "Done" else ("🔴" if overdue else "🟡")
+
+                if status == "Done":
+                    cal_class, icon = "done", "✅"
+                elif overdue:
+                    cal_class, icon = "overdue", "🔴"
+                else:
+                    cal_class, icon = "pending", "🟡"
+
+                due_display = due.strftime('%b %d, %Y') if hasattr(due, 'strftime') else str(due)
                 st.markdown(f"""
-                <div class="card" style="margin-bottom: 0.5rem;">
-                    <b>{icon} {row['Task']}</b><br>
-                    <small>Due: {due.strftime('%b %d, %Y')} | Status: {status}</small>
+                <div class="cal-card {cal_class}">
+                    <div class="cal-icon">{icon}</div>
+                    <div>
+                        <div class="cal-task">{task_text}</div>
+                        <div class="cal-meta">Due {due_display} · {html.escape(str(status))}</div>
+                    </div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -649,7 +832,14 @@ with tab4:
             st.warning(f"Found {len(overdue)} overdue task(s):")
             for t in overdue:
                 due_str = t['Due Date'].strftime('%b %d, %Y') if hasattr(t['Due Date'], 'strftime') else t['Due Date']
-                st.markdown(f"- **{t['Task']}** — Due: {due_str}")
+                task_text = html.escape(str(t['Task']))
+                st.markdown(f"""
+                <div class="alert-row">
+                    <span class="alert-dot"></span>
+                    <span class="alert-task">{task_text}</span>
+                    <span class="alert-due">Due {due_str}</span>
+                </div>
+                """, unsafe_allow_html=True)
 
             st.markdown("---")
             send_col1, send_col2 = st.columns(2)
@@ -666,12 +856,8 @@ with tab4:
 
 # ---------- FOOTER ----------
 st.markdown("""
-<div class="footer">
-    <div style="margin-bottom: 0.5rem;">
-        <strong style="color: var(--primary);">TODO Flow</strong> — Smart Task Management
-    </div>
-    <div style="font-size: 0.85rem; color: var(--text-muted);">
-        Synced with Google Sheets • Automated Reminders
-    </div>
+<div class="manifest-footer">
+    <strong>TODO Flow</strong><br>
+    Synced with Google Sheets · Automated Reminders
 </div>
 """, unsafe_allow_html=True)
