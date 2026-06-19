@@ -468,12 +468,30 @@ def load_tasks():
             df = pd.DataFrame(columns=["ID", "Task", "Due Date", "Status", "Created Date"])
         else:
             df = pd.DataFrame(data[1:], columns=data[0])
+
+            # Drop fully/partially blank rows (stray empty rows in the sheet,
+            # e.g. from manual editing, otherwise produce an empty-string ID
+            # shared by multiple rows -> duplicate widget keys below).
+            blank_id = df['ID'].astype(str).str.strip() == ''
+            if blank_id.any():
+                log_debug(f"Dropped {blank_id.sum()} row(s) with a blank ID from the sheet.", "WARNING")
+                df = df[~blank_id]
+
+            # Guard against duplicate IDs (e.g. a row duplicated by a manual
+            # sheet edit, or a copy/paste). Keep the first occurrence only so
+            # every ID -> exactly one row, which keeps widget keys unique.
+            dup_id = df['ID'].duplicated()
+            if dup_id.any():
+                log_debug(f"Dropped {dup_id.sum()} duplicate-ID row(s) from the sheet (kept first occurrence).", "WARNING")
+                df = df[~dup_id]
+
             # Due Date and Created Date are stored as date-only (e.g. "2026-06-25").
             # Due Date may be blank for tasks with no due date set, which becomes NaT.
             # format='mixed' keeps this tolerant of any older rows that might still
             # have a time component saved in the same column.
             df['Due Date'] = pd.to_datetime(df['Due Date'], errors='coerce', format='mixed')
             df['Created Date'] = pd.to_datetime(df['Created Date'], errors='coerce', format='mixed')
+            df = df.reset_index(drop=True)
         st.session_state.tasks = df
         st.session_state.last_sync = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         return df
@@ -642,10 +660,10 @@ with tab1:
                 # Checkbox to toggle status
                 col1, col2, col3 = st.columns([0.5, 0.5, 5])
                 with col1:
-                    new_status = st.checkbox("Done", value=is_done, key=f"chk_{task_id}",
+                    new_status = st.checkbox("Done", value=is_done, key=f"chk_{idx}_{task_id}",
                                              help="Mark task as completed")
                 with col2:
-                    if st.button("🗑️", key=f"del_{task_id}", help="Delete task"):
+                    if st.button("🗑️", key=f"del_{idx}_{task_id}", help="Delete task"):
                         # Delete logic (optional, not requested but useful)
                         pass  # Implement if needed
 
