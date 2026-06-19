@@ -469,13 +469,23 @@ def load_tasks():
         else:
             df = pd.DataFrame(data[1:], columns=data[0])
 
-            # Drop fully/partially blank rows (stray empty rows in the sheet,
-            # e.g. from manual editing, otherwise produce an empty-string ID
-            # shared by multiple rows -> duplicate widget keys below).
+            # Drop rows where the Task description itself is blank — there's
+            # nothing meaningful to show for these (likely a stray empty row
+            # from manual editing in the sheet).
+            blank_task = df['Task'].astype(str).str.strip() == ''
+            if blank_task.any():
+                log_debug(f"Dropped {blank_task.sum()} row(s) with a blank Task from the sheet.", "WARNING")
+                df = df[~blank_task]
+
+            # Auto-fill a missing ID instead of dropping the row. This is the
+            # common case when someone types a new task directly into the
+            # sheet and skips the ID column — previously that row vanished
+            # from the app entirely with no feedback.
             blank_id = df['ID'].astype(str).str.strip() == ''
             if blank_id.any():
-                log_debug(f"Dropped {blank_id.sum()} row(s) with a blank ID from the sheet.", "WARNING")
-                df = df[~blank_id]
+                generated_ids = [str(uuid.uuid4())[:8].upper() for _ in range(blank_id.sum())]
+                df.loc[blank_id, 'ID'] = generated_ids
+                log_debug(f"Auto-generated ID for {blank_id.sum()} manually-added row(s) missing an ID.", "INFO")
 
             # Guard against duplicate IDs (e.g. a row duplicated by a manual
             # sheet edit, or a copy/paste). Keep the first occurrence only so
@@ -485,12 +495,34 @@ def load_tasks():
                 log_debug(f"Dropped {dup_id.sum()} duplicate-ID row(s) from the sheet (kept first occurrence).", "WARNING")
                 df = df[~dup_id]
 
+            # Normalize Status instead of leaving blank/unexpected values as-is.
+            # With the sheet's Status dropdown this should always be "Done" or
+            # "Not Done", but a manually typed row before the dropdown was set
+            # up (or a value typed before selecting from the dropdown) could
+            # leave this blank or misspelled — treat anything that isn't
+            # exactly "Done" as "Not Done" so the row still renders correctly
+            # instead of falling through with an unrecognized status.
+            valid_status = {"Done", "Not Done"}
+            bad_status = ~df['Status'].isin(valid_status)
+            if bad_status.any():
+                log_debug(f"Normalized {bad_status.sum()} row(s) with a blank/invalid Status to 'Not Done'.", "INFO")
+                df.loc[bad_status, 'Status'] = "Not Done"
+
             # Due Date and Created Date are stored as date-only (e.g. "2026-06-25").
             # Due Date may be blank for tasks with no due date set, which becomes NaT.
             # format='mixed' keeps this tolerant of any older rows that might still
             # have a time component saved in the same column.
             df['Due Date'] = pd.to_datetime(df['Due Date'], errors='coerce', format='mixed')
             df['Created Date'] = pd.to_datetime(df['Created Date'], errors='coerce', format='mixed')
+
+            # Created Date drives the secondary sort key in Tab 1. If someone
+            # added a row manually and left it blank, fill it with today so
+            # the row sorts sensibly instead of floating to one end via NaT.
+            missing_created = df['Created Date'].isna()
+            if missing_created.any():
+                log_debug(f"Filled missing Created Date with today's date for {missing_created.sum()} row(s).", "INFO")
+                df.loc[missing_created, 'Created Date'] = pd.Timestamp(date.today())
+
             df = df.reset_index(drop=True)
         st.session_state.tasks = df
         st.session_state.last_sync = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
